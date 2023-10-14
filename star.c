@@ -166,7 +166,8 @@ void createStar() {
         exit(1);
     }
     fp = fopen(tarName, "w");
-
+    int recordCount = 0;
+    fread(&recordCount, sizeof(int), 1, fp);
 
 
     fclose(fp);
