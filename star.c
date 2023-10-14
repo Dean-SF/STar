@@ -3,6 +3,13 @@
 #include <stdbool.h>
 #include <string.h>
 
+struct headerRecord {
+    char fileName[20];
+    long start;
+    long size;
+};
+
+int fileNamesStartIndex;
 bool extract = false;
 bool verbose = false;
 bool create = false;
@@ -12,7 +19,8 @@ bool append = false;
 bool list = false;
 bool pack = false;
 bool file = false;
-int fileNamesStartIndex;
+char *tarName;
+
 
 void parameterChecker(int argc, char *argv[]) {
     if(argc < 2) {
@@ -141,11 +149,32 @@ void parameterChecker(int argc, char *argv[]) {
             }
         }
     }
+    
+    if(strcmp(&argv[fileNamesStartIndex][strlen(argv[fileNamesStartIndex])-5],".star") != 0 || strlen(argv[fileNamesStartIndex]) <= 5) {
+        printf("El nombre debe terminar en .star y no ser solo la extension: %s\n", argv[fileNamesStartIndex]);
+        exit(1);
+    }
+    tarName = argv[fileNamesStartIndex];
+    fileNamesStartIndex++;
+}
+
+void createStar() {
+    FILE *fp = fopen(tarName, "r");
+    if(fp != NULL) {
+        printf("El archivo ya existe\n");
+        fclose(fp);
+        exit(1);
+    }
+    fp = fopen(tarName, "w");
+
+
+
+    fclose(fp);
 }
 
 int main(int argc, char *argv[]) {
     parameterChecker(argc,argv);
-    
+    /*
     printf("extract: %s\n", extract ? "true" : "false");
     printf("verbose: %s\n", verbose ? "true" : "false");
     printf("create: %s\n", create ? "true" : "false");
@@ -155,6 +184,11 @@ int main(int argc, char *argv[]) {
     printf("list: %s\n", list ? "true" : "false");
     printf("pack: %s\n", pack ? "true" : "false");
     printf("file: %s\n", file ? "true" : "false");
+    */
+
+    if(create) {
+        createStar();
+    }
 
     exit(0);
 }
