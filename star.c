@@ -375,6 +375,19 @@ void insertNewRecord(FILE *tarFile, int offset, int recordCount) {
     free(headerBuffer);
 }
 
+// Esta funcion busca si el siguiente header al actual es un espacio vacio
+// al que si le sumamos ese espacio al actual 
+bool isNextRecordAvailable(FILE *file, int size, int oldSize, int currentRecord, struct headerRecord *fileHeaderRecord) {
+    
+    fseek(file,sizeof(int)+(sizeof(struct headerRecord)*(currentRecord+1)),SEEK_SET); // nos movemos de registro al siguiente
+    fread(fileHeaderRecord,sizeof(struct headerRecord),1,file); // obtenemos el registro
+
+    if((*fileHeaderRecord).size+oldSize >= size && (*fileHeaderRecord).deleted) {
+        return true;
+    }
+    return false;
+}
+
 // Esta funcion busca el header que represente un espacio vacio
 // y que cumpla con tener un espacio igual o mayor al indicado
 // por parametro
@@ -390,6 +403,206 @@ int nextFreeSpaceRecordIndex(FILE *file, int size, int recordCount) {
         }
     }
     return -1;
+}
+
+// Funcion que borra el siguiente registro manteniendo los otros
+void deleteNextRecord(FILE *tarFile, int offset, int recordCount) {
+    char *headerBuffer;
+    fseek(tarFile,sizeof(int)+(sizeof(struct headerRecord)*(offset+2)),SEEK_SET);
+    headerBuffer = (char *)malloc(sizeof(struct headerRecord)*(recordCount-offset-2));
+    fread(headerBuffer,sizeof(struct headerRecord)*(recordCount-offset-2),1,tarFile);
+    fseek(tarFile,sizeof(int)+(sizeof(struct headerRecord)*(offset+1)),SEEK_SET);
+    fwrite(headerBuffer,sizeof(struct headerRecord)*(recordCount-offset-2),1,tarFile);
+    free(headerBuffer);
+}
+
+// Funcion que busca si se puede mantener el mismo registro para cuando el archivo es mas grande
+// que antes, revisando si el siguienter record es un espacio vacio 
+bool keepUpdatedBiggerFile(
+    FILE *tarFile,
+    char *buffer,
+    struct headerRecord fileHeaderRecord,
+    int *currentRecord,
+    int *newFileSize,
+    int *recordCount,
+    int *newRecordCount
+) { 
+    if(*currentRecord+1 >= *recordCount) {
+        return false;
+    }
+    struct headerRecord availableHeaderRecord;
+    
+    if(isNextRecordAvailable(tarFile,*newFileSize,fileHeaderRecord.size,*currentRecord,&availableHeaderRecord)) {
+        printf("El siguiente record esta disponible\n");
+        if(availableHeaderRecord.size + fileHeaderRecord.size == *newFileSize) {
+
+            // agregamos el espacio vacio al registro actual
+            fileHeaderRecord.size += availableHeaderRecord.size;
+            
+            // Borramos el siguiente record que era el borrado
+            deleteNextRecord(tarFile,*currentRecord,*newRecordCount);
+
+            // Vamos al registro actual
+            fseek(tarFile,sizeof(int)+(sizeof(struct headerRecord)*(*currentRecord)),SEEK_SET);
+            fwrite(&fileHeaderRecord,sizeof(struct headerRecord),1,tarFile); // Escribimos el registro actual
+
+            // Guardamos el archivo
+            fseek(tarFile,fileHeaderRecord.start,SEEK_SET);
+            fwrite(buffer,*newFileSize,1,tarFile);
+            
+            // Guardamos la nueva cantidad de registros
+            (*newRecordCount)--;
+            fseek(tarFile,0,SEEK_SET);
+            fwrite(newRecordCount, sizeof(int), 1, tarFile);
+            
+            // Como borramos un registro ahora estamos un registro menos adelante en el ciclo
+            (*recordCount)--;
+
+            printHeader(tarFile);
+
+            return true;
+        // En caso de que sobre espacio del registro siguiente del que robamos espacio
+        } else {
+            printf("Sumados no cubre todo el espacio\n");
+            availableHeaderRecord.size -= (*newFileSize - fileHeaderRecord.size); // Le quitamos al siguiente registro lo que ocupamos
+            availableHeaderRecord.start = fileHeaderRecord.start + *newFileSize; // Cambiamos donde inicia el registro siguiente
+            fileHeaderRecord.size = *newFileSize; // Le agregamos al registro actual lo que le quitamos al registro siguiente
+            
+            // Vamos al registro actual
+            fseek(tarFile,sizeof(int)+(sizeof(struct headerRecord)*(*currentRecord)),SEEK_SET);
+            fwrite(&fileHeaderRecord,sizeof(struct headerRecord),1,tarFile); // Escribimos el registro actual, esto nos deja
+                                                                             // justo donde hay que escribir el siguiente
+            fwrite(&availableHeaderRecord,sizeof(struct headerRecord),1,tarFile); // escribimos el siguiente registro
+
+            // Guardamos el archivo
+            fseek(tarFile,fileHeaderRecord.start,SEEK_SET);
+            fwrite(buffer,*newFileSize,1,tarFile);
+
+            // Saltamos el siguiente registro porque ya sabemos que esta borrado
+            (*currentRecord)++;
+
+            printHeader(tarFile);
+            return true;
+        }
+    }
+    return false;
+}  
+
+void moveUpdatedBiggerFile(
+    FILE *tarFile,
+    char *buffer,
+    struct headerRecord fileHeaderRecord,
+    int *currentRecord,
+    int *newFileSize,
+    int *recordCount,
+    int *newRecordCount
+) {
+    char fileName[20];
+    int availableFreeSpace;
+
+    // Ponemos que el registro actual esta borrado porque hay que mover
+    // el archivo a un lugar con mas espacio
+    fseek(tarFile,sizeof(int)+(sizeof(fileHeaderRecord)*(*currentRecord)),SEEK_SET);
+    strcpy(fileName, fileHeaderRecord.fileName);
+    strcpy(fileHeaderRecord.fileName, ""); // borramos el nombre del archivo del registro
+    fileHeaderRecord.deleted = true;
+    fwrite(&fileHeaderRecord,sizeof(fileHeaderRecord),1,tarFile);
+
+    strcpy(fileHeaderRecord.fileName,fileName); // recuperamos el nombre del archivo
+
+    // Buscamos si hay un espacio disponible
+    availableFreeSpace = nextFreeSpaceRecordIndex(tarFile, *newFileSize,*recordCount);
+    
+    // Aqui ocurren los 3 escenarios
+    // En caso de que haya un espacio libre donde se pueda encajar el archivo
+    // pueden ocurrir dos cosas
+    if(availableFreeSpace > -1) {
+        printf("hay espacio disponible\n");
+        printf("%i %i",*currentRecord, availableFreeSpace);
+        fseek(tarFile,sizeof(int)+(sizeof(fileHeaderRecord)*availableFreeSpace),SEEK_SET);
+        fread(&fileHeaderRecord,sizeof(fileHeaderRecord),1,tarFile);
+
+        // Si el espacio del archivo anterior es mas grande pero hay un espacio libre que le sigue
+        // vamos a reducirle
+        if(*currentRecord+1 == availableFreeSpace) {
+            
+
+        // El nuevo espacio disponible es del mismo tamaño que el archivo actualizado, por ende
+        // solo hay que actualizar el registro del espacio disponible y guardar el archivo
+        // en el lugar indicado por el registro
+        } else if(fileHeaderRecord.size == *newFileSize) {
+            printf("del mismo tamaño\n");
+            // Actualizamos el record del nuevo espacio encontrado
+            fileHeaderRecord.deleted = false;
+            strcpy(fileHeaderRecord.fileName,fileName);
+            fseek(tarFile,sizeof(int)+(sizeof(fileHeaderRecord)*availableFreeSpace),SEEK_SET);
+            fwrite(&fileHeaderRecord,sizeof(fileHeaderRecord),1,tarFile);
+
+            // Actualizamos el archivo
+            fseek(tarFile,fileHeaderRecord.start,SEEK_END);
+            fwrite(&buffer,*newFileSize,1,tarFile);
+
+        // En caso de que el espacio disponible es mayor que el archivo actualizado, hay que dividir
+        // el registro en dos, uno que contenga el archivo actualizado y otro que indique el espacio
+        // vacio restante
+        } else {
+            printf("de tamaño superior\n");
+            int newFreeSpace = fileHeaderRecord.size - *newFileSize; // calculamos el espacio que va a sobrar
+            
+            // Hacemos un espacio para colocar el registro con el espacio sobrante
+            insertNewRecord(tarFile, availableFreeSpace, *newRecordCount);
+
+            // Actualizamos el record del nuevo espacio encontrado
+            fileHeaderRecord.deleted = false;
+            fileHeaderRecord.size = *newFileSize;
+            strcpy(fileHeaderRecord.fileName,fileName);
+            fseek(tarFile,sizeof(int)+(sizeof(fileHeaderRecord)*availableFreeSpace),SEEK_SET);
+            fwrite(&fileHeaderRecord,sizeof(fileHeaderRecord),1,tarFile);
+
+            // Actualizamos el archivo
+            fseek(tarFile,fileHeaderRecord.start,SEEK_END);
+            fwrite(&buffer,*newFileSize,1,tarFile);
+
+            // Nuevo record con el espacio sobrante
+            fileHeaderRecord.deleted = true;
+            fileHeaderRecord.start = fileHeaderRecord.start + fileHeaderRecord.size;
+            fileHeaderRecord.size = newFreeSpace;
+            strcpy(fileHeaderRecord.fileName,"");
+            fseek(tarFile,sizeof(int)+(sizeof(fileHeaderRecord)*(availableFreeSpace+1)),SEEK_SET);
+            fwrite(&fileHeaderRecord,sizeof(fileHeaderRecord),1,tarFile);
+            
+            // Actualizamos la cantidad de registros en el header
+            (*newRecordCount)++;
+            fseek(tarFile,0,SEEK_SET);
+            fwrite(newRecordCount, sizeof(int), 1, tarFile);
+
+            // corregimos el offset al agregar un espacio vacio nuevo
+            (*recordCount)++;
+        }
+    
+    // El Ultimo caso seria donde no hay un espacio disponible por lo que hay que guardar el archivo actualizado
+    // al final de los archivos
+    } else {
+
+        printf("no hay espacio disponible\n");
+
+        // Agregamos el archivo al final
+        fseek(tarFile,0,SEEK_END);
+        fileHeaderRecord.start = ftell(tarFile);
+        fwrite(buffer,*newFileSize,1,tarFile);
+
+        // Agregamos el nuevo record al header
+        fileHeaderRecord.size = *newFileSize;
+        fileHeaderRecord.deleted = false;
+        fseek(tarFile,sizeof(int)+(sizeof(fileHeaderRecord)*(*newRecordCount)),SEEK_SET);
+        fwrite(&fileHeaderRecord,sizeof(fileHeaderRecord),1,tarFile);
+        // Guardamos la nueva cantidad de records
+        (*newRecordCount)++;
+        fseek(tarFile,0,SEEK_SET);
+        fwrite(newRecordCount, sizeof(int), 1, tarFile);
+    }
+
+    printHeader(tarFile);
 }
 
 void updateStar(int parameterCount, char *parameters[]) {
@@ -478,107 +691,26 @@ void updateStar(int parameterCount, char *parameters[]) {
         // Si el tamaño del nuevo archivo es mas grande que el espacio del archivo empaquetado
         // pueden ocurrir 3 cosas que se explican mas adelante
         } else if(newFileSize >= fileHeaderRecord.size) {
-            char fileName[20];
-            int availableFreeSpace;
-
-            // Ponemos que el registro actual esta borrado porque hay que mover
-            // el archivo a un lugar con mas espacio
-            fseek(tarFile,sizeof(int)+(sizeof(fileHeaderRecord)*i),SEEK_SET);
-            strcpy(fileName, fileHeaderRecord.fileName);
-            strcpy(fileHeaderRecord.fileName, ""); // borramos el nombre del archivo del registro
-            fileHeaderRecord.deleted = true;
-            fwrite(&fileHeaderRecord,sizeof(fileHeaderRecord),1,tarFile);
-
-            strcpy(fileHeaderRecord.fileName,fileName); // recuperamos el nombre del archivo
-
-            // Buscamos si hay un espacio disponible
-            availableFreeSpace = nextFreeSpaceRecordIndex(tarFile, newFileSize,recordCount);
             
-            // Aqui ocurren los 3 escenarios
-            // En caso de que haya un espacio libre donde se pueda encajar el archivo
-            // pueden ocurrir dos cosas
-            if(availableFreeSpace > -1) {
-                printf("hay espacio disponible\n");
-                fseek(tarFile,sizeof(int)+(sizeof(fileHeaderRecord)*availableFreeSpace),SEEK_SET);
-                fread(&fileHeaderRecord,sizeof(fileHeaderRecord),1,tarFile);
-
-                // El nuevo espacio disponible es del mismo tamaño que el archivo actualizado, por ende
-                // solo hay que actualizar el registro del espacio disponible y guardar el archivo
-                // en el lugar indicado por el registro
-                if(fileHeaderRecord.size == newFileSize) {
-                    printf("del mismo tamaño\n");
-                    // Actualizamos el record del nuevo espacio encontrado
-                    fileHeaderRecord.deleted = false;
-                    strcpy(fileHeaderRecord.fileName,fileName);
-                    fseek(tarFile,sizeof(int)+(sizeof(fileHeaderRecord)*availableFreeSpace),SEEK_SET);
-                    fwrite(&fileHeaderRecord,sizeof(fileHeaderRecord),1,tarFile);
-
-                    // Actualizamos el archivo
-                    fseek(tarFile,fileHeaderRecord.start,SEEK_END);
-                    fwrite(&buffer,newFileSize,1,tarFile);
-
-                // En caso de que el espacio disponible es mayor que el archivo actualizado, hay que dividir
-                // el registro en dos, uno que contenga el archivo actualizado y otro que indique el espacio
-                // vacio restante
-                } else {
-                    printf("de tamaño superior\n");
-                    int newFreeSpace = fileHeaderRecord.size - newFileSize; // calculamos el espacio que va a sobrar
-                    printf("%li %i\n",fileHeaderRecord.size, newFileSize);
-                    
-                    // Hacemos un espacio para colocar el registro con el espacio sobrante
-                    insertNewRecord(tarFile, availableFreeSpace, newRecordCount);
-
-                    // Actualizamos el record del nuevo espacio encontrado
-                    fileHeaderRecord.deleted = false;
-                    fileHeaderRecord.size = newFileSize;
-                    strcpy(fileHeaderRecord.fileName,fileName);
-                    fseek(tarFile,sizeof(int)+(sizeof(fileHeaderRecord)*availableFreeSpace),SEEK_SET);
-                    fwrite(&fileHeaderRecord,sizeof(fileHeaderRecord),1,tarFile);
-
-                    // Actualizamos el archivo
-                    fseek(tarFile,fileHeaderRecord.start,SEEK_END);
-                    fwrite(&buffer,newFileSize,1,tarFile);
-
-                    // Nuevo record con el espacio sobrante
-                    fileHeaderRecord.deleted = true;
-                    fileHeaderRecord.start = fileHeaderRecord.start + fileHeaderRecord.size;
-                    fileHeaderRecord.size = newFreeSpace;
-                    strcpy(fileHeaderRecord.fileName,"");
-                    fseek(tarFile,sizeof(int)+(sizeof(fileHeaderRecord)*(availableFreeSpace+1)),SEEK_SET);
-                    fwrite(&fileHeaderRecord,sizeof(fileHeaderRecord),1,tarFile);
-                    
-                    // Actualizamos la cantidad de registros en el header
-                    newRecordCount++;
-                    fseek(tarFile,0,SEEK_SET);
-                    fwrite(&newRecordCount, sizeof(int), 1, tarFile);
-
-                    // corregimos el offset al agregar un espacio vacio nuevo
-                    recordCount++;
-                }
-            
-            // El Ultimo caso seria donde no hay un espacio disponible por lo que hay que guardar el archivo actualizado
-            // al final de los archivos
-            } else {
-
-                printf("no hay espacio disponible\n");
-
-                // Agregamos el archivo al final
-                fseek(tarFile,0,SEEK_END);
-                fileHeaderRecord.start = ftell(tarFile);
-                fwrite(buffer,newFileSize,1,tarFile);
-
-                // Agregamos el nuevo record al header
-                fileHeaderRecord.size = newFileSize;
-                fileHeaderRecord.deleted = false;
-                fseek(tarFile,sizeof(int)+(sizeof(fileHeaderRecord)*newRecordCount),SEEK_SET);
-                fwrite(&fileHeaderRecord,sizeof(fileHeaderRecord),1,tarFile);
-                // Guardamos la nueva cantidad de records
-                newRecordCount++;
-                fseek(tarFile,0,SEEK_SET);
-                fwrite(&newRecordCount, sizeof(int), 1, tarFile);
+            if(!keepUpdatedBiggerFile(
+                tarFile,
+                buffer,
+                fileHeaderRecord,
+                &i,
+                &newFileSize,
+                &recordCount,
+                &newRecordCount
+            )) {
+                moveUpdatedBiggerFile(
+                    tarFile,
+                    buffer,
+                    fileHeaderRecord,
+                    &i,
+                    &newFileSize,
+                    &recordCount,
+                    &newRecordCount
+                );
             }
-
-            printHeader(tarFile);
 
         // Si el tamaño del nuevo archivo es mas pequeño que el espacio del archivo anterior, entonces
         // hay que agregar un registro que indique el espacio sobrante vacio
