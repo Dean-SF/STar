@@ -3,6 +3,8 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdbool.h>
+#include <unistd.h>
+#include <sys/types.h>
 
 struct headerRecord {
     char fileName[20];
@@ -405,15 +407,26 @@ int nextFreeSpaceRecordIndex(FILE *file, int size, int recordCount) {
     return -1;
 }
 
-// Funcion que borra el siguiente registro manteniendo los otros
-void deleteNextRecord(FILE *tarFile, int offset, int recordCount) {
+// Funcion que borra el registro actual manteniendo los otros
+void deleteCurrentRecord(FILE *tarFile, int offset, int recordCount) {
     char *headerBuffer;
-    fseek(tarFile,sizeof(int)+(sizeof(struct headerRecord)*(offset+2)),SEEK_SET);
-    headerBuffer = (char *)malloc(sizeof(struct headerRecord)*(recordCount-offset-2));
-    fread(headerBuffer,sizeof(struct headerRecord)*(recordCount-offset-2),1,tarFile);
     fseek(tarFile,sizeof(int)+(sizeof(struct headerRecord)*(offset+1)),SEEK_SET);
-    fwrite(headerBuffer,sizeof(struct headerRecord)*(recordCount-offset-2),1,tarFile);
+    headerBuffer = (char *)malloc(sizeof(struct headerRecord)*(recordCount-offset-1));
+    fread(headerBuffer,sizeof(struct headerRecord)*(recordCount-offset-1),1,tarFile);
+    fseek(tarFile,sizeof(int)+(sizeof(struct headerRecord)*(offset)),SEEK_SET);
+    fwrite(headerBuffer,sizeof(struct headerRecord)*(recordCount-offset-1),1,tarFile);
     free(headerBuffer);
+}
+
+// Funcion que obtiene el final de los archivos donde podemos
+// escribir un archivo que no entre en ningun lado, esto ocurre porque el
+// delete no reduce el tamaño del archivo y no se puede usar un SEEK_END para 
+// ir ahi
+int getRealEndOfFile(FILE *tarFile, int recordCount) {
+    struct headerRecord fileHeaderRecord;
+    fseek(tarFile,sizeof(int)+(sizeof(fileHeaderRecord)*(recordCount-1)),SEEK_SET);
+    fread(&fileHeaderRecord,sizeof(fileHeaderRecord),1,tarFile);
+    return fileHeaderRecord.start + fileHeaderRecord.size;
 }
 
 // Funcion que busca si se puede mantener el mismo registro para cuando el archivo es mas grande
@@ -440,7 +453,7 @@ bool keepUpdatedBiggerFile(
             fileHeaderRecord.size += availableHeaderRecord.size;
             
             // Borramos el siguiente record que era el borrado
-            deleteNextRecord(tarFile,*currentRecord,*newRecordCount);
+            deleteCurrentRecord(tarFile,*currentRecord+1,*newRecordCount);
 
             // Vamos al registro actual
             fseek(tarFile,sizeof(int)+(sizeof(struct headerRecord)*(*currentRecord)),SEEK_SET);
@@ -539,7 +552,7 @@ void moveUpdatedBiggerFile(
             fwrite(&fileHeaderRecord,sizeof(fileHeaderRecord),1,tarFile);
 
             // Actualizamos el archivo
-            fseek(tarFile,fileHeaderRecord.start,SEEK_END);
+            fseek(tarFile,fileHeaderRecord.start,SEEK_SET);
             fwrite(&buffer,*newFileSize,1,tarFile);
 
         // En caso de que el espacio disponible es mayor que el archivo actualizado, hay que dividir
@@ -558,9 +571,11 @@ void moveUpdatedBiggerFile(
             strcpy(fileHeaderRecord.fileName,fileName);
             fseek(tarFile,sizeof(int)+(sizeof(fileHeaderRecord)*availableFreeSpace),SEEK_SET);
             fwrite(&fileHeaderRecord,sizeof(fileHeaderRecord),1,tarFile);
+            
+            int endFilePosition = getRealEndOfFile(tarFile,*newRecordCount);
 
             // Actualizamos el archivo
-            fseek(tarFile,fileHeaderRecord.start,SEEK_END);
+            fseek(tarFile,endFilePosition,SEEK_END);
             fwrite(&buffer,*newFileSize,1,tarFile);
 
             // Nuevo record con el espacio sobrante
@@ -768,6 +783,119 @@ void updateStar(int parameterCount, char *parameters[]) {
     fclose(tarFile);
 }
 
+// Funcion que borra un registro, mueve los demas registros para que esten parejos
+// y mueve todos los demas archivos hacia atras lo suficiente para rellenar
+// el espacio vacio
+void defragCurrentSpace(
+    FILE *tarFile,
+    int *recordCount,
+    int *currentRecord,
+    struct headerRecord deletedRecord
+) {
+    char *buffer;
+    struct headerRecord currentMovingFile;
+
+
+    // Borramos el registro actual, moviendo el resto hacia atras
+    deleteCurrentRecord(tarFile, *currentRecord,*recordCount);
+    (*recordCount)--; // actualizamos la cantidad de registros, ahora hay 1 menos
+
+    printf("currentRecord: %i, record start: %li, recordCount: %i\n", *currentRecord, deletedRecord.start, *recordCount);
+
+
+    for(int i = *currentRecord ; i < *recordCount; i++) {
+        //Obtener el header del archivo
+        fseek(tarFile,sizeof(int)+(sizeof(currentMovingFile)*i),SEEK_SET); // vamos al siguiente registro
+        fread(&currentMovingFile,sizeof(currentMovingFile),1,tarFile); // obtenemos el registro
+        
+        // Si el registro actual es de un archivo borrado, no hacemos el proceso 
+        // de moverlo porque significa que aqui no hay informacion que mover.
+        if(!currentMovingFile.deleted) {
+            // Cargar el archivo
+            buffer = (char *)malloc(currentMovingFile.size); // hacemos un espacio donde podamos cargar el archivo a memoria
+            fseek(tarFile,currentMovingFile.start,SEEK_SET); // buscamos el archivo
+            fread(buffer,currentMovingFile.size,1,tarFile);  // lo cargamos a memoria
+
+            // Escribir archivo mas atras
+            fseek(tarFile,currentMovingFile.start-deletedRecord.size,SEEK_SET); //vamos al nuevo lugar del archivo
+            fwrite(buffer,currentMovingFile.size,1,tarFile); // escribimos el archivo
+
+            free(buffer); // Liberar memoria 
+        }
+
+        // Guardamos el header del archivo con el inicio actualizado
+        currentMovingFile.start -= deletedRecord.size;
+        fseek(tarFile,sizeof(int)+(sizeof(currentMovingFile)*i),SEEK_SET);
+        fwrite(&currentMovingFile,sizeof(currentMovingFile),1,tarFile);
+    }
+    (*currentRecord)--; // En caso que el siguiente registro sea un hueco vacio, este ahora esta en
+                        // la posicion actual y no se va a revisar, entonces se resta en 1 para que
+                        // el siguiente ciclo donde se ejecuto esta funcion, logre ver este registro
+                        // sin embargo esto no deberia ser posible porque ya debeian estar fusionados
+                        // pero se coloca de todas formas por si acaso.
+}
+
+void packStar(int parameterCount, char *parameters[]) {
+    char *buffer;
+    int recordCount, tarFinalSize;
+    FILE *currentExtractFile;
+    struct headerRecord fileHeaderRecord;
+
+    // Abrir el archivo, si no existe se da error.
+    // Si no existiera no hay que extraer
+    FILE *tarFile = fopen(tarName, "r+");
+    if(tarFile == NULL) {
+        printf("El archivo no existe\n");
+        fclose(tarFile);
+        exit(1);
+    }
+
+    // Lo primero que se escribe en el header es la cantidad de registros que tiene para
+    // poder saber si hay archivos, y si hay cuantos son para recorrer todos los registros
+    fread(&recordCount,sizeof(int),1,tarFile);
+
+    // Si tiene 0 registros significa que no hay nada para desfragmentar
+    if(recordCount <= 0) {
+        printf("El star no tiene archivos empaquetados\n");
+        fclose(tarFile);
+        exit(1);
+    }
+
+    // Con este ciclo vamos extrayendo uno por uno los archivos que hay segun el header
+    for(int i = 0 ; i < recordCount; i++) {
+        //Obtener el header del archivo
+        fseek(tarFile,sizeof(int)+(sizeof(fileHeaderRecord)*i),SEEK_SET); // vamos al primer registro
+        fread(&fileHeaderRecord,sizeof(fileHeaderRecord),1,tarFile); // obtenemos el registro
+        
+        if(i == recordCount-1) {
+            tarFinalSize = fileHeaderRecord.start + fileHeaderRecord.size;
+        }
+
+        // si el registro actual es de un archivo existente, nos lo saltamos
+        if(!fileHeaderRecord.deleted) {
+            continue;
+        }
+
+        // En caso de encontrar un espacio vacio, se borra su registro
+        // y se mueven todos los otros registros 1 hacia atras
+        // y los archivos se mueven hacia atras la cantidad de espacio
+        // que existe en ese lugar
+        defragCurrentSpace(
+            tarFile,
+            &recordCount,
+            &i,
+            fileHeaderRecord
+        );
+    }
+    // Guardamos la nueva cantidad de records
+    fseek(tarFile,0,SEEK_SET);
+    fwrite(&recordCount, sizeof(int), 1, tarFile);
+    truncate(tarName,tarFinalSize); // se pide que el tamaño del archivo represente el tamaño real
+
+    printHeader(tarFile); // debugging
+    fclose(tarFile);
+}
+
 int main(int argc, char *argv[]) {
     parameterChecker(argc,argv);
     /*
@@ -788,6 +916,8 @@ int main(int argc, char *argv[]) {
         extractStar(argc,argv);
     } else if(update) {
         updateStar(argc,argv);
+    } else if(pack) {
+        packStar(argc,argv);
     }
 
     exit(0);
