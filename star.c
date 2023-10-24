@@ -396,10 +396,34 @@ void verboseExtract(int comment, char *fileName) {
             case 7:
                 printf("Desempaquetando datos del archivo: %s\n", fileName);
                 break;
+            case 8:
+                printf("Buscando si el archivo requiere extraerse...\n");
+                break;
+            case 9:
+                printf("El archivo requiere extraerse\n");
+                break;
+            case 10:
+                printf("El archivo NO requiere extraerse\n");
+                break;
             default:
                 break;
         } 
     }
+}
+
+bool isExtractNeeded(int parameterCount, char *parameters[], char *fileName) {
+    verboseExtract(8,NULL);
+    // Si no hay archivos especificados entonces hay que extraer todos
+    if(fileNamesStartIndex >= parameterCount)
+        return true;
+    // Buscamos a ver si el nombre del registro actual coincide con uno de la lista de
+    // archivos indicado en los parametros del comando
+    for(int i = fileNamesStartIndex ; i < parameterCount ; i++) {
+        if(strcmp(fileName,parameters[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void extractStar(int parameterCount, char *parameters[]) {
@@ -447,8 +471,13 @@ void extractStar(int parameterCount, char *parameters[]) {
             verboseExtract(4,NULL);
             continue;
         }
+        verboseExtract(5,fileHeaderRecord.fileName);
 
-        verboseExtract(5,NULL);
+        if(!isExtractNeeded(parameterCount,parameters,fileHeaderRecord.fileName)) {
+            verboseExtract(10,NULL);
+            continue;
+        }
+        verboseExtract(9,NULL);
 
         verboseExtract(1, fileHeaderRecord.fileName);
         //Crear archivo
