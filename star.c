@@ -275,7 +275,7 @@ void createStar(int parameterCount, char *parameters[]) {
     
     // -f indica el nombre del archivo segun la documentacion de tar
     if(!file) {
-        printf("Falta el parametro -f o --file");
+        printf("Falta el parametro -f o --file\n");
         exit(1);
     }
 
@@ -410,7 +410,7 @@ void extractStar(int parameterCount, char *parameters[]) {
 
     // -f indica el nombre del archivo segun la documentacion de tar
     if(!file) {
-        printf("Falta el parametro -f o --file");
+        printf("Falta el parametro -f o --file\n");
         exit(1);
     }
 
@@ -889,7 +889,7 @@ void updateStar(int parameterCount, char *parameters[]) {
     
     // -f indica el nombre del archivo segun la documentacion de tar
     if(!file) {
-        printf("Falta el parametro -f o --file");
+        printf("Falta el parametro -f o --file\n");
         exit(1);
     }
 
@@ -1170,7 +1170,7 @@ void packStar(int parameterCount, char *parameters[]) {
 
     // -f indica el nombre del archivo segun la documentacion de tar
     if(!file) {
-        printf("Falta el parametro -f o --file");
+        printf("Falta el parametro -f o --file\n");
         exit(1);
     }
 
@@ -1382,7 +1382,7 @@ void appendStar(int parameterCount, char *parameters[]) {
 
     // -f indica el nombre del archivo segun la documentacion de tar
     if(!file) {
-        printf("Falta el parametro -f o --file");
+        printf("Falta el parametro -f o --file\n");
         exit(1);
     }
 
@@ -1695,7 +1695,7 @@ void deleteStar(int parameterCount, char *parameters[]) {
 
     // -f indica el nombre del archivo segun la documentacion de tar
     if(!file) {
-        printf("Falta el parametro -f o --file");
+        printf("Falta el parametro -f o --file\n");
         exit(1);
     }
 
@@ -1807,7 +1807,7 @@ void listStar(int parameterCount, char *parameters[]) {
 
     // -f indica el nombre del archivo segun la documentacion de tar
     if(!file) {
-        printf("Falta el parametro -f o --file");
+        printf("Falta el parametro -f o --file\n");
         exit(1);
     }
 
