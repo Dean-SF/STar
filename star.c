@@ -13,7 +13,7 @@ struct headerRecord {
     bool deleted;
 };
 
-#define HEADEREND sizeof(struct headerRecord)*101
+#define HEADEREND sizeof(int)+sizeof(struct headerRecord)*101
 
 int fileNamesStartIndex;
 bool extract = false;
