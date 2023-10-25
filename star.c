@@ -1655,9 +1655,9 @@ void moveRegsInHeaderDelete(int *recordCount, int *index, FILE *tarFile, int *fl
 Función para eliminar un registro que tiene el vecino anterior marcado como deleted
 */
 void deleteCaseOne(FILE *tarFile, struct headerRecord record, int *recordCount, int *index, int *flag) {
-        char* emptyString = (char*)malloc(1);  
+        verboseDelete(4, NULL); 
         if (*index+1 != *recordCount)
-            verboseDelete(8, &emptyString);
+            verboseDelete(8, NULL);
 
         struct headerRecord preNeighborRecord;
         fseek(tarFile, sizeof(int)+(sizeof(record)*(*index-1)), SEEK_SET);  // Obtener el registro anterior
@@ -1673,9 +1673,9 @@ void deleteCaseOne(FILE *tarFile, struct headerRecord record, int *recordCount, 
 Función para eliminar un registro que tiene el vecino posterior marcado como deleted
 */
 void deleteCaseTwo(FILE *tarFile, struct headerRecord record, int *recordCount, int *index, int *flag) {
-    char* emptyString = (char*)malloc(1);  
+    verboseDelete(5, NULL); 
     if (*index+1 != *recordCount)
-        verboseDelete(8, &emptyString);
+        verboseDelete(8, NULL);
 
     struct headerRecord postNeighborRecord;
     fseek(tarFile, sizeof(int)+(sizeof(record)*(*index+1)), SEEK_SET);  // Obtener el registro posterior
@@ -1691,9 +1691,8 @@ void deleteCaseTwo(FILE *tarFile, struct headerRecord record, int *recordCount, 
 Función para eliminar un registro que tiene ambos vecinos marcados como deleted
 */
 void deleteCaseThree(FILE *tarFile, struct headerRecord record, int *recordCount, int *index, int *flag) {
-    char* emptyString = (char*)malloc(1);  
     if (*index+1 != *recordCount)
-        verboseDelete(8, &emptyString);
+        verboseDelete(8, NULL);
 
     struct headerRecord preNeighborRecord, postNeighborRecord;
     fseek(tarFile, sizeof(int)+(sizeof(record)*(*index-1)), SEEK_SET);  // Obtener el registro anterior
@@ -1780,7 +1779,6 @@ void deleteStar(int parameterCount, char *parameters[]) {
                         rewind(tarFile); 
                         if ((index+1) != recordCount) { // Si no es el ultimo registro, solo se elimina 1
                             recordCount--;
-                            verboseDelete(4, &parameters[i]);
                         } else                           // Si es el ultimo registro, se eliminan 2 porque se fusionó
                             recordCount -= 2;
                         fwrite(&recordCount, sizeof(int), 1, tarFile);
@@ -1790,7 +1788,6 @@ void deleteStar(int parameterCount, char *parameters[]) {
                         rewind(tarFile); 
                         if ((index+2) == recordCount) { // Si es el ultimo registro, solo se eliminan 2 porque se fusionó
                             recordCount -= 2;
-                            verboseDelete(5, &parameters[i]);
                         } else                           // Si no es el ultimo registro, se elimina 1
                             recordCount--;
                         fwrite(&recordCount, sizeof(int), 1, tarFile);
