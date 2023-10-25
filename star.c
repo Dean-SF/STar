@@ -300,6 +300,7 @@ void createStar(int parameterCount, char *parameters[]) {
 
         if(checkDuplicate(tarFile,&parameters[i],&recordCount)) {
             verboseCreate(6,parameters[i]);
+            continue;
         }
 
         verboseCreate(1,parameters[i]);
