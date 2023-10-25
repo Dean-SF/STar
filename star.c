@@ -926,7 +926,6 @@ void updateStar(int parameterCount, char *parameters[]) {
     FILE *tarFile = fopen(tarName, "r+");
     if(tarFile == NULL) {
         printf("El archivo no existe\n");
-        fclose(tarFile);
         exit(1);
     }
 
@@ -1207,7 +1206,6 @@ void packStar(int parameterCount, char *parameters[]) {
     FILE *tarFile = fopen(tarName, "r+");
     if(tarFile == NULL) {
         printf("El archivo no existe\n");
-        fclose(tarFile);
         exit(1);
     }
 
@@ -1420,7 +1418,6 @@ void appendStar(int parameterCount, char *parameters[]) {
 
     if (tarFile == NULL) {
         printf("El archivo no existe\n");
-        fclose(tarFile);
         exit(1);
     } 
     fread(&recordCount,sizeof(int),1,tarFile);  // Ver cuantos registros hay actualmente
@@ -1732,7 +1729,6 @@ void deleteStar(int parameterCount, char *parameters[]) {
     
     if (tarFile == NULL) {
         printf("El archivo no existe\n");
-        fclose(tarFile);
         exit(1);
     } 
     fread(&recordCount,sizeof(int),1,tarFile); // Ver cuantos registros hay actualmente
