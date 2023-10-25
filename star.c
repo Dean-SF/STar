@@ -307,7 +307,7 @@ void createStar(int parameterCount, char *parameters[]) {
         // Abrimos el archivo a empaquetar
         fileToAdd = fopen(parameters[i], "r"); 
         // Si no existe pasamos al siguiente
-        if(tarFile == NULL) {
+        if(fileToAdd == NULL) {
             verboseCreate(2,parameters[i]);
             continue;
         }
@@ -443,7 +443,6 @@ void extractStar(int parameterCount, char *parameters[]) {
     FILE *tarFile = fopen(tarName, "r");
     if(tarFile == NULL) {
         printf("El archivo no existe\n");
-        fclose(tarFile);
         exit(1);
     }
     
@@ -1351,19 +1350,19 @@ void moveRegsInHeaderAppend(int *recordCount, int *index, FILE *tarFile, int fla
         // Crear un buffer del tamaño de los registros a mover
         struct HeaderRecord *buffer = malloc(sizeof(struct headerRecord) * numFilesToMove);
         
-        fseek(tarFile, sizeof(struct headerRecord)*(*index), SEEK_SET);
+        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index), SEEK_SET);
         fread(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile);
         // Escribir el buffer de vuelta en el archivo desde la posición que se desea
-        fseek(tarFile, sizeof(struct headerRecord)*(*index+1), SEEK_SET);
+        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index+1), SEEK_SET);
         fwrite(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile);
     } else {
         numFilesToMove = (int)remainingElements - 1;    // Caso de que quede algun registro con size 0
         // Crear un buffer del tamaño de los registros a mover
         struct HeaderRecord *buffer = malloc(sizeof(struct headerRecord) * numFilesToMove);
-        fseek(tarFile, sizeof(struct headerRecord)*(*index), SEEK_SET);
+        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index), SEEK_SET);
         fread(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile);
         // Escribir el buffer de vuelta en el archivo desde la posición que se desea
-        fseek(tarFile, sizeof(struct headerRecord)*(*index), SEEK_SET);
+        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index), SEEK_SET);
         fwrite(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile);
     }
     free(buffer);// Liberar el buffer
@@ -1624,10 +1623,10 @@ void moveRegsInHeaderDelete(int *recordCount, int *index, FILE *tarFile, int *fl
         size_t remainingElements = (totalSize - currentPosition) / elementSize;
         numFilesToMove = (int)remainingElements - 1;
        
-        fseek(tarFile, sizeof(struct headerRecord)*(*index+1), SEEK_SET);  
+        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index+1), SEEK_SET);  
         fread(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile);    // Leer los registros despues del registro borrado
         // Escribir el buffer de vuelta en el archivo desde la posición que se desea
-        fseek(tarFile, sizeof(struct headerRecord)*(*index), SEEK_SET);
+        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index), SEEK_SET);
         fwrite(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile);
         free(buffer);
     } else if (*flag == 2) {    // Correr los registros en caso de que el vecino posterior estuviera borrado
@@ -1635,10 +1634,10 @@ void moveRegsInHeaderDelete(int *recordCount, int *index, FILE *tarFile, int *fl
         size_t remainingElements = (totalSize - currentPosition) / elementSize;
         numFilesToMove = (int)remainingElements - 1;
         
-        fseek(tarFile, sizeof(struct headerRecord)*(*index+2), SEEK_SET);
+        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index+2), SEEK_SET);
         fread(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile); // Leer los registros despues del registro borrado
         // Escribir el buffer de vuelta en el archivo desde la posición que se desea
-        fseek(tarFile, sizeof(struct headerRecord)*(*index+1), SEEK_SET);
+        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index+1), SEEK_SET);
         fwrite(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile);
         free(buffer); 
     } else {
@@ -1646,10 +1645,10 @@ void moveRegsInHeaderDelete(int *recordCount, int *index, FILE *tarFile, int *fl
         size_t remainingElements = (totalSize - currentPosition) / elementSize;
         numFilesToMove = (int)remainingElements - 1;
         
-        fseek(tarFile, sizeof(struct headerRecord)*(*index+2), SEEK_SET);
+        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index+2), SEEK_SET);
         fread(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile); // Leer los registros despues del registro borrado
         // Escribir el buffer de vuelta en el archivo desde la posición que se desea
-        fseek(tarFile, sizeof(struct headerRecord)*(*index), SEEK_SET);
+        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index), SEEK_SET);
         fwrite(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile);
         free(buffer); 
     }
@@ -1747,17 +1746,6 @@ void deleteStar(int parameterCount, char *parameters[]) {
     
     for (int i = fileNamesStartIndex; i < parameterCount ; i++) {
         struct headerRecord recToDelete;
-        verboseDelete(1, &parameters[i]);
-
-        // Verificar que el archivo que se desea eliminar exista
-        fileToDelete = fopen(parameters[i], "r"); 
-        
-        // Si no existe pasamos al siguiente
-        if(fileToDelete == NULL) {
-            printf("El archivo: %s no existe, continuando con el siguiente si hay\n", parameters[i]);
-            continue;
-        }
-        verboseDelete(2, &parameters[i]);
 
         strcpy(recToDelete.fileName,parameters[i]);
         // Verificar si el archivo se encuentra empaquetado o no
@@ -1843,7 +1831,6 @@ void listStar(int parameterCount, char *parameters[]) {
     FILE *tarFile = fopen(tarName, "r");
     if (tarFile == NULL) {
         printf("El archivo no existe\n");
-        fclose(tarFile);
         exit(1);
     } 
     tarFile = fopen(tarName, "r");
