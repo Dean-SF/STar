@@ -505,6 +505,202 @@ void extractStar(int parameterCount, char *parameters[]) {
     fclose(tarFile);
 }
 
+
+/*
+Funcion para imprimir los verbose simples segun sea el caso 
+*/
+void verboseDelete(int comment, char *fileName[]) {
+    if (verbose || vverbose) {
+        switch(comment) {
+            case 1:
+                printf("Intentando abrir el archivo: %s\n", fileName[0]); 
+                break;
+            case 2:
+                printf("Se logró abrir el archivo: %s\n", fileName[0]); 
+                break;
+            case 3:
+                printf("Se eliminó el archivo: %s\n", fileName[0]);
+                break;
+            default:
+                break;
+        }
+    } 
+    if (vverbose) {
+        switch(comment) {
+            case 4:
+                printf("El registro anterior al registro que se va a eliminar esta marcado como eliminado\n"); 
+                break;
+            case 5:
+                printf("El registro posterior al registro que se va a eliminar esta marcado como eliminado\n"); 
+                break;
+            case 6:
+                printf("El registro se encuentra entre dos registros que estan marcados como eliminados\n");
+                break;
+            case 7:
+                printf("Buscando registros vecinos que hayan sido eliminados\n");
+                break;
+            case 8:
+                printf("Se aumentó el espacio disponible\n");
+                break;
+            case 9:
+                printf("Se corrieron los registros del header\n");
+                break;
+            case 10:
+                printf("No tiene vecinos eliminados\n");
+                break;
+            default:
+                break;
+        } 
+    }
+}
+
+/*
+Funcion encargada de realizar el corrimiento de los registros cuando se realiza un delete
+*/
+void moveRegsInHeaderDelete(int *recordCount, int *index, FILE *tarFile, int *flag) { 
+    if (*index+1 != *recordCount)
+        verboseDelete(9, NULL);
+    // Si estamos haciendo un delete con fusion, vamos a correr los registros despues de donde estamos actualmente 
+    // Direccion: <-
+    int numFilesToMove; // Cantidad de registros que se deben correr 
+    // Crear un buffer del tamaño de los registros a mover
+    struct HeaderRecord *buffer = malloc(sizeof(struct headerRecord) * numFilesToMove);
+
+    size_t elementSize = sizeof(struct headerRecord);
+    size_t totalSize = (*recordCount) * elementSize;
+
+    if (*flag == 1) {   // Correr los registros en caso de que el vecino anterior estuviera borrado
+        size_t currentPosition = (*index) * elementSize;
+        size_t remainingElements = (totalSize - currentPosition) / elementSize;
+        numFilesToMove = (int)remainingElements - 1;
+       
+        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index+1), SEEK_SET);  
+        fread(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile);    // Leer los registros despues del registro borrado
+        // Escribir el buffer de vuelta en el archivo desde la posición que se desea
+        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index), SEEK_SET);
+        fwrite(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile);
+        free(buffer);
+    } else if (*flag == 2) {    // Correr los registros en caso de que el vecino posterior estuviera borrado
+        size_t currentPosition = (*index+1) * elementSize;
+        size_t remainingElements = (totalSize - currentPosition) / elementSize;
+        numFilesToMove = (int)remainingElements - 1;
+        
+        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index+2), SEEK_SET);
+        fread(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile); // Leer los registros despues del registro borrado
+        // Escribir el buffer de vuelta en el archivo desde la posición que se desea
+        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index+1), SEEK_SET);
+        fwrite(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile);
+        free(buffer); 
+    } else {
+        size_t currentPosition = (*index+1) * elementSize;
+        size_t remainingElements = (totalSize - currentPosition) / elementSize;
+        numFilesToMove = (int)remainingElements - 1;
+        
+        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index+2), SEEK_SET);
+        fread(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile); // Leer los registros despues del registro borrado
+        // Escribir el buffer de vuelta en el archivo desde la posición que se desea
+        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index), SEEK_SET);
+        fwrite(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile);
+        free(buffer); 
+    }
+}
+
+/*
+Funcion para verificar si los registros contiguos a uno en especifico han sido eliminados 
+*/
+int checkDeletedNeighbors(FILE *tarFile, struct headerRecord record, int *recordCount, int *index) {
+    /*
+    Significado de los valores de flag:
+    0: No tiene vecinos eliminados
+    1: El registro anterior ha sido eliminado
+    2: El registro posterior ha sido eliminado
+    3: Los registros anterior y posterior han sido eliminados
+    */
+    verboseDelete(7, NULL);
+    int flag = 0;
+    struct headerRecord preNeighborRecord, postNeighborRecord;
+
+    // Obtener el registro anterior y posterior, en caso de que existan
+    fseek(tarFile,sizeof(int)+(sizeof(record)*(*index-1)),SEEK_SET); 
+    fread(&preNeighborRecord,sizeof(record),1,tarFile); 
+    fseek(tarFile,sizeof(int)+(sizeof(record)*(*index+1)),SEEK_SET); 
+    fread(&postNeighborRecord,sizeof(record),1,tarFile); 
+
+    if (*index == 0) {
+        if (postNeighborRecord.deleted == true) {
+            flag = 2;
+            return flag;
+        }
+    }
+    if (preNeighborRecord.deleted == true && postNeighborRecord.deleted == false) {
+        flag = 1;
+    } else if (preNeighborRecord.deleted == false && postNeighborRecord.deleted == true) {
+        flag = 2;
+    } else if (preNeighborRecord.deleted == true && postNeighborRecord.deleted == true) {
+        flag = 3;
+    } else {
+        flag = 0;
+        verboseDelete(10, NULL);
+    }
+    return flag; 
+}
+
+/*
+Función para eliminar un registro que tiene el vecino anterior marcado como deleted
+*/
+void deleteCaseOne(FILE *tarFile, struct headerRecord record, int *recordCount, int *index, int *flag) {
+        if (*index+1 != *recordCount)
+            verboseDelete(8, NULL);
+
+        struct headerRecord preNeighborRecord;
+        fseek(tarFile, sizeof(int)+(sizeof(record)*(*index-1)), SEEK_SET);  // Obtener el registro anterior
+        fread(&preNeighborRecord,sizeof(preNeighborRecord),1,tarFile); 
+        preNeighborRecord.size += record.size;                              // Actualizar tamaño
+        fseek(tarFile, sizeof(int)+(sizeof(record)*(*index-1)), SEEK_SET);
+        fwrite(&preNeighborRecord, sizeof(preNeighborRecord), 1, tarFile);  // Actualizar header
+        // Correr los registros para borrar el registro que quedó fusionado
+        moveRegsInHeaderDelete(recordCount, index, tarFile, flag);       
+}
+
+/*
+Función para eliminar un registro que tiene el vecino posterior marcado como deleted
+*/
+void deleteCaseTwo(FILE *tarFile, struct headerRecord record, int *recordCount, int *index, int *flag) {
+    if (*index+1 != *recordCount)
+        verboseDelete(8, NULL);
+
+    struct headerRecord postNeighborRecord;
+    fseek(tarFile, sizeof(int)+(sizeof(record)*(*index+1)), SEEK_SET);  // Obtener el registro posterior
+    fread(&postNeighborRecord,sizeof(postNeighborRecord),1,tarFile); 
+    record.size += postNeighborRecord.size;                             // Actualizar tamaño 
+    fseek(tarFile, sizeof(int)+(sizeof(record)*(*index)), SEEK_SET);
+    fwrite(&record, sizeof(postNeighborRecord), 1, tarFile);            // Actualizar header
+    // Correr los registros para borrar el registro que quedó fusionado
+    moveRegsInHeaderDelete(recordCount, index, tarFile, flag);    
+}
+
+/*
+Función para eliminar un registro que tiene ambos vecinos marcados como deleted
+*/
+void deleteCaseThree(FILE *tarFile, struct headerRecord record, int *recordCount, int *index, int *flag) { 
+    if (*index+1 != *recordCount)
+        verboseDelete(8, NULL);
+
+    struct headerRecord preNeighborRecord, postNeighborRecord;
+    fseek(tarFile, sizeof(int)+(sizeof(record)*(*index-1)), SEEK_SET);  // Obtener el registro anterior
+    fread(&preNeighborRecord,sizeof(preNeighborRecord),1,tarFile); 
+    fseek(tarFile, sizeof(int)+(sizeof(record)*(*index+1)), SEEK_SET);  // Obtener el registro posterior
+    fread(&postNeighborRecord,sizeof(postNeighborRecord),1,tarFile); 
+
+    preNeighborRecord.size += record.size + postNeighborRecord.size; // Se va a sumar los tamaños al primer registro de los tres
+    fseek(tarFile, sizeof(int)+(sizeof(record)*(*index-1)), SEEK_SET);  // Actualizar info en el header
+    fwrite(&preNeighborRecord, sizeof(preNeighborRecord), 1, tarFile); 
+
+    // Hacer el corrimiento de los registros, donde ya no se toman en cuenta 
+    // el segundo y tercer registro de la tripleta
+    moveRegsInHeaderDelete(recordCount, index, tarFile, flag);
+}
+
 /*
 Funcion para imprimir los verbose del Update
 */
@@ -806,6 +1002,49 @@ void moveUpdatedBiggerFile(
     strcpy(fileHeaderRecord.fileName, ""); // borramos el nombre del archivo del registro
     fileHeaderRecord.deleted = true;
     fwrite(&fileHeaderRecord,sizeof(fileHeaderRecord),1,tarFile);
+
+    int flagResult;
+
+    // Revisar si los registros vecinos han sido eliminados 
+    flagResult = checkDeletedNeighbors(tarFile, fileHeaderRecord, newRecordCount, currentRecord);
+
+    switch (flagResult) {
+        case 1: // Su vecino anterior esta marcado como deleted
+            deleteCaseOne(tarFile, fileHeaderRecord, newRecordCount, currentRecord, &flagResult);
+            rewind(tarFile); 
+            if (((*currentRecord)+1) != (*newRecordCount)) { // Si no es el ultimo registro, solo se elimina 1
+                (*newRecordCount)--;
+                (*recordCount)--;
+
+            } else {                          // Si es el ultimo registro, se eliminan 2 porque se fusionó
+                (*newRecordCount) -= 2;
+                (*recordCount) -= 2;
+            }
+            
+            fwrite(newRecordCount, sizeof(int), 1, tarFile);
+            break;        
+        case 2: // Su vecino posterior esta marcado como deleted
+            deleteCaseTwo(tarFile, fileHeaderRecord, newRecordCount, currentRecord, &flagResult);
+            rewind(tarFile); 
+            if (((*currentRecord)+2) == (*newRecordCount)) { // Si es el ultimo registro, solo se eliminan 2 porque se fusionó
+                (*newRecordCount) -= 2;
+                (*recordCount) -= 2;
+            } else {                         // Si no es el ultimo registro, se elimina 1
+                (*newRecordCount)--;
+                (*recordCount)--;
+            }
+            fwrite(newRecordCount, sizeof(int), 1, tarFile);
+            break;
+        case 3: // Ambos vecinos estan marcados como deleted
+            deleteCaseThree(tarFile, fileHeaderRecord, newRecordCount, currentRecord, &flagResult);
+            rewind(tarFile); 
+            (*newRecordCount) = (*newRecordCount) - 2;
+            (*recordCount) = (*recordCount) - 2;
+            fwrite(newRecordCount, sizeof(int), 1, tarFile);
+            break;
+        default:
+            break;
+    }
 
     strcpy(fileHeaderRecord.fileName,fileName); // recuperamos el nombre del archivo
 
@@ -1512,205 +1751,6 @@ bool checkEmptyStar(FILE *tarFile, int *recordCount) {
 }
 
 /*
-Funcion para imprimir los verbose simples segun sea el caso 
-*/
-void verboseDelete(int comment, char *fileName[]) {
-    if (verbose || vverbose) {
-        switch(comment) {
-            case 1:
-                printf("Intentando abrir el archivo: %s\n", fileName[0]); 
-                break;
-            case 2:
-                printf("Se logró abrir el archivo: %s\n", fileName[0]); 
-                break;
-            case 3:
-                printf("Se eliminó el archivo: %s\n", fileName[0]);
-                break;
-            default:
-                break;
-        }
-    } 
-    if (vverbose) {
-        switch(comment) {
-            case 4:
-                printf("El registro anterior al registro que se va a eliminar esta marcado como eliminado\n"); 
-                break;
-            case 5:
-                printf("El registro posterior al registro que se va a eliminar esta marcado como eliminado\n"); 
-                break;
-            case 6:
-                printf("El registro se encuentra entre dos registros que estan marcados como eliminados\n");
-                break;
-            case 7:
-                printf("Buscando registros vecinos que hayan sido eliminados\n");
-                break;
-            case 8:
-                printf("Se aumentó el espacio disponible\n");
-                break;
-            case 9:
-                printf("Se corrieron los registros del header\n");
-                break;
-            case 10:
-                printf("No tiene vecinos eliminados\n");
-                break;
-            default:
-                break;
-        } 
-    }
-}
-
-/*
-Funcion para verificar si los registros contiguos a uno en especifico han sido eliminados 
-*/
-int checkDeletedNeighbors(FILE *tarFile, struct headerRecord record, int *recordCount, int *index) {
-    /*
-    Significado de los valores de flag:
-    0: No tiene vecinos eliminados
-    1: El registro anterior ha sido eliminado
-    2: El registro posterior ha sido eliminado
-    3: Los registros anterior y posterior han sido eliminados
-    */
-    char* emptyString = (char*)malloc(1);  
-    verboseDelete(7, &emptyString);
-    int flag = 0;
-    struct headerRecord preNeighborRecord, postNeighborRecord;
-
-    // Obtener el registro anterior y posterior, en caso de que existan
-    fseek(tarFile,sizeof(int)+(sizeof(record)*(*index-1)),SEEK_SET); 
-    fread(&preNeighborRecord,sizeof(record),1,tarFile); 
-    fseek(tarFile,sizeof(int)+(sizeof(record)*(*index+1)),SEEK_SET); 
-    fread(&postNeighborRecord,sizeof(record),1,tarFile); 
-
-    if (*index == 0) {
-        if (postNeighborRecord.deleted == true) {
-            flag = 2;
-            return flag;
-        }
-    }
-    if (preNeighborRecord.deleted == true && postNeighborRecord.deleted == false) {
-        flag = 1;
-    } else if (preNeighborRecord.deleted == false && postNeighborRecord.deleted == true) {
-        flag = 2;
-    } else if (preNeighborRecord.deleted == true && postNeighborRecord.deleted == true) {
-        flag = 3;
-    } else {
-        flag = 0;
-        verboseDelete(10, &emptyString);
-    }
-    return flag; 
-}
-
-/*
-Funcion encargada de realizar el corrimiento de los registros cuando se realiza un delete
-*/
-void moveRegsInHeaderDelete(int *recordCount, int *index, FILE *tarFile, int *flag) {
-    char* emptyString = (char*)malloc(1);  
-    if (*index+1 != *recordCount)
-        verboseDelete(9, &emptyString);
-    // Si estamos haciendo un delete con fusion, vamos a correr los registros despues de donde estamos actualmente 
-    // Direccion: <-
-    int numFilesToMove; // Cantidad de registros que se deben correr 
-    // Crear un buffer del tamaño de los registros a mover
-    struct HeaderRecord *buffer = malloc(sizeof(struct headerRecord) * numFilesToMove);
-
-    size_t elementSize = sizeof(struct headerRecord);
-    size_t totalSize = (*recordCount) * elementSize;
-
-    if (*flag == 1) {   // Correr los registros en caso de que el vecino anterior estuviera borrado
-        size_t currentPosition = (*index) * elementSize;
-        size_t remainingElements = (totalSize - currentPosition) / elementSize;
-        numFilesToMove = (int)remainingElements - 1;
-       
-        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index+1), SEEK_SET);  
-        fread(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile);    // Leer los registros despues del registro borrado
-        // Escribir el buffer de vuelta en el archivo desde la posición que se desea
-        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index), SEEK_SET);
-        fwrite(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile);
-        free(buffer);
-    } else if (*flag == 2) {    // Correr los registros en caso de que el vecino posterior estuviera borrado
-        size_t currentPosition = (*index+1) * elementSize;
-        size_t remainingElements = (totalSize - currentPosition) / elementSize;
-        numFilesToMove = (int)remainingElements - 1;
-        
-        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index+2), SEEK_SET);
-        fread(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile); // Leer los registros despues del registro borrado
-        // Escribir el buffer de vuelta en el archivo desde la posición que se desea
-        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index+1), SEEK_SET);
-        fwrite(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile);
-        free(buffer); 
-    } else {
-        size_t currentPosition = (*index+1) * elementSize;
-        size_t remainingElements = (totalSize - currentPosition) / elementSize;
-        numFilesToMove = (int)remainingElements - 1;
-        
-        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index+2), SEEK_SET);
-        fread(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile); // Leer los registros despues del registro borrado
-        // Escribir el buffer de vuelta en el archivo desde la posición que se desea
-        fseek(tarFile, sizeof(int) + sizeof(struct headerRecord)*(*index), SEEK_SET);
-        fwrite(buffer, sizeof(struct headerRecord), numFilesToMove, tarFile);
-        free(buffer); 
-    }
-}
-
-/*
-Función para eliminar un registro que tiene el vecino anterior marcado como deleted
-*/
-void deleteCaseOne(FILE *tarFile, struct headerRecord record, int *recordCount, int *index, int *flag) {
-        verboseDelete(4, NULL); 
-        if (*index+1 != *recordCount)
-            verboseDelete(8, NULL);
-
-        struct headerRecord preNeighborRecord;
-        fseek(tarFile, sizeof(int)+(sizeof(record)*(*index-1)), SEEK_SET);  // Obtener el registro anterior
-        fread(&preNeighborRecord,sizeof(preNeighborRecord),1,tarFile); 
-        preNeighborRecord.size += record.size;                              // Actualizar tamaño
-        fseek(tarFile, sizeof(int)+(sizeof(record)*(*index-1)), SEEK_SET);
-        fwrite(&preNeighborRecord, sizeof(preNeighborRecord), 1, tarFile);  // Actualizar header
-        // Correr los registros para borrar el registro que quedó fusionado
-        moveRegsInHeaderDelete(recordCount, index, tarFile, flag);       
-}
-
-/*
-Función para eliminar un registro que tiene el vecino posterior marcado como deleted
-*/
-void deleteCaseTwo(FILE *tarFile, struct headerRecord record, int *recordCount, int *index, int *flag) {
-    verboseDelete(5, NULL); 
-    if (*index+1 != *recordCount)
-        verboseDelete(8, NULL);
-
-    struct headerRecord postNeighborRecord;
-    fseek(tarFile, sizeof(int)+(sizeof(record)*(*index+1)), SEEK_SET);  // Obtener el registro posterior
-    fread(&postNeighborRecord,sizeof(postNeighborRecord),1,tarFile); 
-    record.size += postNeighborRecord.size;                             // Actualizar tamaño 
-    fseek(tarFile, sizeof(int)+(sizeof(record)*(*index)), SEEK_SET);
-    fwrite(&record, sizeof(postNeighborRecord), 1, tarFile);            // Actualizar header
-    // Correr los registros para borrar el registro que quedó fusionado
-    moveRegsInHeaderDelete(recordCount, index, tarFile, flag);    
-}
-
-/*
-Función para eliminar un registro que tiene ambos vecinos marcados como deleted
-*/
-void deleteCaseThree(FILE *tarFile, struct headerRecord record, int *recordCount, int *index, int *flag) {
-    if (*index+1 != *recordCount)
-        verboseDelete(8, NULL);
-
-    struct headerRecord preNeighborRecord, postNeighborRecord;
-    fseek(tarFile, sizeof(int)+(sizeof(record)*(*index-1)), SEEK_SET);  // Obtener el registro anterior
-    fread(&preNeighborRecord,sizeof(preNeighborRecord),1,tarFile); 
-    fseek(tarFile, sizeof(int)+(sizeof(record)*(*index+1)), SEEK_SET);  // Obtener el registro posterior
-    fread(&postNeighborRecord,sizeof(postNeighborRecord),1,tarFile); 
-
-    preNeighborRecord.size += record.size + postNeighborRecord.size; // Se va a sumar los tamaños al primer registro de los tres
-    fseek(tarFile, sizeof(int)+(sizeof(record)*(*index-1)), SEEK_SET);  // Actualizar info en el header
-    fwrite(&preNeighborRecord, sizeof(preNeighborRecord), 1, tarFile); 
-
-    // Hacer el corrimiento de los registros, donde ya no se toman en cuenta 
-    // el segundo y tercer registro de la tripleta
-    moveRegsInHeaderDelete(recordCount, index, tarFile, flag);
-}
-
-/*
 Función encargada de manejar el proceso de borrado de un archivo
 */
 void deleteStar(int parameterCount, char *parameters[]) {
@@ -1780,6 +1820,7 @@ void deleteStar(int parameterCount, char *parameters[]) {
                         rewind(tarFile); 
                         if ((index+1) != recordCount) { // Si no es el ultimo registro, solo se elimina 1
                             recordCount--;
+                            verboseDelete(4, &parameters[i]);
                         } else                           // Si es el ultimo registro, se eliminan 2 porque se fusionó
                             recordCount -= 2;
                         fwrite(&recordCount, sizeof(int), 1, tarFile);
@@ -1789,6 +1830,7 @@ void deleteStar(int parameterCount, char *parameters[]) {
                         rewind(tarFile); 
                         if ((index+2) == recordCount) { // Si es el ultimo registro, solo se eliminan 2 porque se fusionó
                             recordCount -= 2;
+                            verboseDelete(5, &parameters[i]);
                         } else                           // Si no es el ultimo registro, se elimina 1
                             recordCount--;
                         fwrite(&recordCount, sizeof(int), 1, tarFile);
